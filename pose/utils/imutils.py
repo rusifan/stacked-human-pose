@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import scipy.misc
-
+from PIL import Image
 from .misc import *
 
 def im_to_numpy(img):
@@ -21,7 +21,9 @@ def im_to_torch(img):
 
 def load_image(img_path):
     # H x W x C => C x H x W
-    return im_to_torch(scipy.misc.imread(img_path, mode='RGB'))
+    # return im_to_torch(scipy.misc.imread(img_path, mode='RGB'))
+    # import pdb;pdb.set_trace()
+    return im_to_torch(Image.open(img_path))
 
 def resize(img, owidth, oheight):
     img = im_to_numpy(img)
@@ -53,7 +55,7 @@ def draw_labelmap(img, pt, sigma, type='Gaussian'):
     # Draw a 2D gaussian
     # Adopted from https://github.com/anewell/pose-hg-train/blob/master/src/pypose/draw.py
     img = to_numpy(img)
-
+    # import pdb;pdb.set_trace()
     # Check that any part of the gaussian is in-bounds
     ul = [int(pt[0] - 3 * sigma), int(pt[1] - 3 * sigma)]
     br = [int(pt[0] + 3 * sigma + 1), int(pt[1] + 3 * sigma + 1)]

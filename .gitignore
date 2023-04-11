@@ -20,7 +20,14 @@ data/h36m
 __pycache__/
 *.py[cod]
 *$py.class
-
+results
+srun.sh
+run.sh
+vis.sh
+new_img
+wandb
+mpii-20230402T103613Z-001.zip
+only_vis.sh
 # C extensions
 *.so
 

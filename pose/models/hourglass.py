@@ -97,7 +97,7 @@ class HourglassNet(nn.Module):
     '''Hourglass model from Newell et al ECCV 2016'''
     def __init__(self, block, num_stacks=2, num_blocks=4, num_classes=16):
         super(HourglassNet, self).__init__()
-
+        # import pdb; pdb.set_trace()
         self.inplanes = 64
         self.num_feats = 128
         self.num_stacks = num_stacks

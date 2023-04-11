@@ -22,7 +22,8 @@ from pose.utils.transforms import fliplr, flip_back
 import pose.models as models
 import pose.datasets as datasets
 import pose.losses as losses
-
+import wandb
+from tqdm import tqdm
 
 # get model names and dataset names
 model_names = sorted(name for name in models.__dict__
@@ -36,7 +37,7 @@ dataset_names = sorted(name for name in datasets.__dict__
 
 
 # init global variables
-best_acc = 0
+best_loss = 10000
 idx = []
 
 # select proper device to run
@@ -45,9 +46,10 @@ cudnn.benchmark = True  # There is BN issue for early version of PyTorch
                         # see https://github.com/bearpaw/pytorch-pose/issues/33
 
 def main(args):
-    global best_acc
+    global best_loss
     global idx
 
+    wandb_flag = True
     # idx is the index of joints used to compute accuracy
     if args.dataset in ['mpii', 'lsp']:
         idx = [1,2,3,4,5,6,11,12,15,16]
@@ -65,14 +67,18 @@ def main(args):
     njoints = datasets.__dict__[args.dataset].njoints
 
     print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
-    # import pdb;pdb.set_trace()
     model = models.__dict__[args.arch](num_stacks=args.stacks,
                                        num_blocks=args.blocks,
                                        num_classes=njoints,
                                        resnet_layers=args.resnet_layers)
 
     model = torch.nn.DataParallel(model).to(device)
-
+    if wandb_flag:
+        wandb.login()
+        wandb.init(project="mpii_stacked", entity="nafisur")
+        wandb.run.name = "stack_4_16kps_fix"
+        wandb.run.save()
+        wandb.watch(model)
     # define loss function (criterion) and optimizer
     criterion = losses.JointsMSELoss().to(device)
 
@@ -152,32 +158,38 @@ def main(args):
             val_loader.dataset.sigma *=  args.sigma_decay
 
         # train for one epoch
-        train_loss, train_acc = train(train_loader, model, criterion, optimizer,
+        train_loss = train(train_loader, model, criterion, optimizer,
                                       args.debug, args.flip)
-
+        print(f'train_loss: {train_loss}')
+        if wandb_flag:
+            wandb.log({"train_loss": train_loss})
         # evaluate on validation set
-        valid_loss, valid_acc, predictions = validate(val_loader, model, criterion,
+        valid_loss, predictions = validate(val_loader, model, criterion,
                                                   njoints, args.debug, args.flip)
-
+        print(f'valid_loss: {valid_loss}')
+        if wandb_flag:
+            wandb.log({"valid_loss": valid_loss})
         # append logger file
+        train_acc, valid_acc = 0, 0
         logger.append([epoch + 1, lr, train_loss, valid_loss, train_acc, valid_acc])
 
         # remember best acc and save checkpoint
-        if valid_acc > best_acc:
-            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/model_{epoch}.pth')
-        is_best = valid_acc > best_acc
-        best_acc = max(valid_acc, best_acc)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': args.arch,
-            'state_dict': model.state_dict(),
-            'best_acc': best_acc,
-            'optimizer' : optimizer.state_dict(),
-        }, predictions, is_best, checkpoint=args.checkpoint, snapshot=args.snapshot)
+        if valid_loss < best_loss:
+            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps_fix/model_{epoch}.pth')
+        # is_best = valid_acc > best_acc
+            best_loss = min(valid_loss, best_loss)
+        # save_checkpoint({
+        #     'epoch': epoch + 1,
+        #     'arch': args.arch,
+        #     'state_dict': model.state_dict(),
+        #     'best_acc': best_acc,
+        #     'optimizer' : optimizer.state_dict(),
+        # }, predictions, is_best, checkpoint=args.checkpoint, snapshot=args.snapshot)
         # torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/model_{epoch}.pth')
     logger.close()
-    logger.plot(['Train Acc', 'Val Acc'])
-    savefig(os.path.join(args.checkpoint, 'log.eps'))
+
+    # logger.plot(['Train Acc', 'Val Acc'])
+    # savefig(os.path.join(args.checkpoint, 'log.eps'))
 
 
 def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
@@ -193,15 +205,16 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
 
     gt_win, pred_win = None, None
     bar = Bar('Train', max=len(train_loader))
-    for i, (input, target, meta) in enumerate(train_loader):
+    for i, (input, target, meta) in enumerate(tqdm(train_loader,0)):
+    # for i, (input, target, meta) in enumerate(train_loader): 3tqdm added
         # measure data loading time
         data_time.update(time.time() - end)
 
         input, target = input.to(device), target.to(device, non_blocking=True)
         target_weight = meta['target_weight'].to(device, non_blocking=True)
+        # import pdb;pdb.set_trace()
 
         # compute output
-        import pdb;pdb.set_trace()
         output = model(input)
         if type(output) == list:  # multiple output
             loss = 0
@@ -210,7 +223,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
             output = output[-1]
         else:  # single output
             loss = criterion(output, target, target_weight)
-        acc = accuracy(output, target, idx)
+        # acc = accuracy(output, target, idx)
 
         if debug: # visualize groundtruth and predictions
             gt_batch_img = batch_with_heatmap(input, target)
@@ -230,7 +243,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
 
         # measure accuracy and record loss
         losses.update(loss.item(), input.size(0))
-        acces.update(acc[0], input.size(0))
+        # acces.update(acc[0], input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -255,7 +268,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
         bar.next()
 
     bar.finish()
-    return losses.avg, acces.avg
+    return losses.avg
 
 
 def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
@@ -274,7 +287,8 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
     end = time.time()
     bar = Bar('Eval ', max=len(val_loader))
     with torch.no_grad():
-        for i, (input, target, meta) in enumerate(val_loader):
+        for i, (input, target, meta) in enumerate(tqdm(val_loader,0)):
+        # for i, (input, target, meta) in enumerate(val_loader): 3tqdm added
             # measure data loading time
             data_time.update(time.time() - end)
 
@@ -302,7 +316,7 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             else:  # single output
                 loss = criterion(output, target, target_weight)
 
-            acc = accuracy(score_map, target.cpu(), idx)
+            # acc = accuracy(score_map, target.cpu(), idx)
 
             # generate predictions
             preds = final_preds(score_map, meta['center'], meta['scale'], [64, 64])
@@ -326,7 +340,7 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
 
             # measure accuracy and record loss
             losses.update(loss.item(), input.size(0))
-            acces.update(acc[0], input.size(0))
+            # acces.update(acc[0], input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -346,7 +360,7 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             bar.next()
 
         bar.finish()
-    return losses.avg, acces.avg, predictions
+    return losses.avg, predictions
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -434,6 +448,7 @@ if __name__ == '__main__':
                         help='evaluate model on validation set')
     parser.add_argument('-d', '--debug', dest='debug', action='store_true',
                         help='show intermediate results')
-
+    # parser.add_argument( '--wandb_flag', dest='debug', action='store_true',
+    #                     help='show intermediate results')
 
     main(parser.parse_args())

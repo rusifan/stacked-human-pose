@@ -6,7 +6,7 @@ from easydict import EasyDict as edict
 
 import torch
 import torch.nn as nn
-from torchvision.models.resnet import model_zoo
+# from torchvision.models.resnet import model_zoo
 from torchvision.models.resnet import model_urls
 from torchvision.models.resnet import BasicBlock, Bottleneck
 
@@ -176,5 +176,5 @@ def pose_resnet(**kwargs):
         cfg.final_conv_kernel, kwargs['num_classes'], cfg.depth_dim
     )
     pose_net = ResPoseNet(backbone_net, head_net)
-    init_pose_net(pose_net, name)
+    # init_pose_net(pose_net, name)
     return pose_net

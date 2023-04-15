@@ -1,42 +1,40 @@
 from __future__ import print_function, absolute_import
 
 import os
-import argparse
 import time
+from pathlib import Path
+from typing import Optional
+from collections import OrderedDict
+
+import tqdm
+import wandb
 import matplotlib.pyplot as plt
-
 import torch
-import torch.nn.parallel
 import torch.backends.cudnn as cudnn
+import torch.nn.parallel
 import torch.optim
-import torchvision.datasets as datasets
 
-import _init_paths
-from pose import Bar
-from pose.utils.logger import Logger, savefig
-from pose.utils.evaluation import accuracy, AverageMeter, final_preds
-from pose.utils.misc import save_checkpoint, save_pred, adjust_learning_rate
-from pose.utils.osutils import mkdir_p, isfile, isdir, join
-from pose.utils.imutils import batch_with_heatmap
-from pose.utils.transforms import fliplr, flip_back
+import pose.losses as losses
 import pose.models as models
 import pose.datasets as datasets
-import pose.losses as losses
-import wandb
 from pose.datasets.human36_dataloader import hum36m_dataloader
-from tqdm import tqdm
 from pose.models.hourglass import *
+from pose.utils.evaluation import accuracy, AverageMeter
+from pose.utils.imutils import batch_with_heatmap
+from pose.utils.logger import Logger, savefig
+from pose.utils.misc import save_pred, adjust_learning_rate
+from pose.utils.osutils import isfile, join
+from pose.utils.transforms import fliplr, flip_back
+from pose.utils.visualize import show, show_heatmap
 
 # get model names and dataset names
 model_names = sorted(name for name in models.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(models.__dict__[name]))
-
+                     if name.islower() and not name.startswith("__")
+                     and callable(models.__dict__[name]))
 
 dataset_names = sorted(name for name in datasets.__dict__
-    if name.islower() and not name.startswith("__")
-    and callable(datasets.__dict__[name]))
-
+                       if name.islower() and not name.startswith("__")
+                       and callable(datasets.__dict__[name]))
 
 # init global variables
 best_loss = 10000
@@ -45,31 +43,49 @@ idx = []
 # select proper device to run
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 cudnn.benchmark = True  # There is BN issue for early version of PyTorch
-                        # see https://github.com/bearpaw/pytorch-pose/issues/33
+
+
+def load_model(weight_path: Optional[Path]):
+    model = hg(num_stacks=4, num_blocks=1, num_classes=16)
+    if weight_path is not None:
+        checkpoint = torch.load(str(weight_path))
+
+        new_state_dict = OrderedDict()
+        for k, v in checkpoint.items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
+        # load params
+        model.load_state_dict(new_state_dict)
+
+    model = torch.nn.DataParallel(model).to(device)
+    return model
+
 
 def main():
     global best_loss
     global idx
-    train_batch = 128
-    test_batch = 32
+    train_batch = 8
+    test_batch = 8
     workers = 1
-    epochs = 100
-    schedule = [60,90]
+    epochs = 5
+    schedule = [60, 90]
     gamma = 0.1
     sigma_decay = 0
     debug = False
     flip = False
     train_flag = True
     test_flag = True
-    wandb_flag = True
+    wandb_flag = False
     annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
     annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
-    root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+    # root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+    root_data_path = "./data/human3.6/"
     # idx is the index of joints used to compute accuracy
     # if args.dataset in ['mpii', 'lsp']:
     #     idx = [1,2,3,4,5,6,11,12,15,16]
     # elif args.dataset == 'coco':
     #     idx = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]
+    idx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     # else:
     #     print("Unknown dataset: {}".format(args.dataset))
     #     assert False
@@ -87,18 +103,9 @@ def main():
     #                                    num_classes=njoints,
     #                                    resnet_layers=args.resnet_layers)
     # model = HourglassNet(1,num_stacks=4, num_blocks=1, num_classes=17)
-    model = hg(num_stacks=4, num_blocks=1, num_classes=16)
-    checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth")
-    from collections import OrderedDict
-    new_state_dict = OrderedDict()
-    # for k, v in checkpoint['state_dict'].items():
-    for k, v in checkpoint.items():
-        # import pdb;pdb.set_trace()
-        name = k[7:] # remove `module.`
-        new_state_dict[name] = v
-    # load params
-    model.load_state_dict(new_state_dict)
-    model = torch.nn.DataParallel(model).to(device)
+
+    # model = load_model(weight_path=Path("./checkpoint/mpii/model_35.pth"))
+    model = load_model(weight_path=None)
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_stacked", entity="nafisur")
@@ -110,14 +117,19 @@ def main():
 
     # if args.solver == 'rms':
     optimizer = torch.optim.RMSprop(model.parameters(),
-                                        lr=2.5e-4,
-                                        momentum=0,
-                                        weight_decay=0)
+                                    lr=2.5e-4,
+                                    momentum=0,
+                                    weight_decay=0)
+
+    # checkpoint = torch.load('./checkpoint/mpii/hg_s1_b1/model_best.pth.tar')
+    # model.load_state_dict(checkpoint['state_dict'])
+    # optimizer.load_state_dict(checkpoint['optimizer'])
+
     # elif args.solver == 'adam':
-    optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=2.5e-4,
-        )
+    # optimizer = torch.optim.Adam(
+    #     model.parameters(),
+    #     lr=2.5e-4,
+    # )
     # else:
     #     print('Unknown solver: {}'.format(args.solver))
     #     assert False
@@ -125,7 +137,7 @@ def main():
     # optionally resume from a checkpoint
     # title = 'juman3.6m' + ' ' + args.arch
     title = 'juman3.6m'
-    resume = False 
+    resume = False
     if resume:
         if isfile(resume):
             print("=> loading checkpoint '{}'".format(args.resume))
@@ -140,16 +152,18 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
     else:
-        logger = Logger(join('./checkpoint/h36m/test', 'log.txt'), title=title)
+        log_path = Path('./checkpoint/h36m/test/log.txt')
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logger = Logger(str(log_path), title=title)
         logger.set_names(['Epoch', 'LR', 'Train Loss', 'Val Loss',
                           'Train Acc', 'Val Acc'])
 
     print('    Total params: %.2fM'
-          % (sum(p.numel() for p in model.parameters())/1000000.0))
+          % (sum(p.numel() for p in model.parameters()) / 1000000.0))
 
     # create data loader
     # train_dataset = datasets.__dict__[args.dataset](is_train=True, **vars(args))
-    train_dataset = hum36m_dataloader(root_data_path, annotation_path_train, True, [1.1, 2.0], False, 5, flip_prob = 1)
+    train_dataset = hum36m_dataloader(root_data_path, annotation_path_train, True, [1.1, 2.0], False, 5, flip_prob=1)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_batch, shuffle=True,
@@ -157,7 +171,7 @@ def main():
     )
 
     # val_dataset = datasets.__dict__[args.dataset](is_train=False, **vars(args))
-    val_dataset = hum36m_dataloader(root_data_path, annotation_path_test, True, [1.1, 2.0], False, 5, flip_prob = 1)
+    val_dataset = hum36m_dataloader(root_data_path, annotation_path_test, True, [1.1, 2.0], False, 5, flip_prob=1)
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=test_batch, shuffle=False,
@@ -173,6 +187,8 @@ def main():
         save_pred(predictions, checkpoint=args.checkpoint)
         return
 
+    validate(val_loader, model, criterion, njoints, debug, flip)
+
     # train and eval
     lr = 2.5e-4
     for epoch in range(epochs):
@@ -181,18 +197,18 @@ def main():
 
         # decay sigma
         if sigma_decay > 0:
-            train_loader.dataset.sigma *=  sigma_decay
-            val_loader.dataset.sigma *=  sigma_decay
+            train_loader.dataset.sigma *= sigma_decay
+            val_loader.dataset.sigma *= sigma_decay
 
         # train for one epoch
         if train_flag:
             train_loss = train(train_loader, model, criterion, optimizer,
-                                      debug, flip)
+                               debug, flip)
         if wandb_flag:
             wandb.log({"train_loss": train_loss})
         # evaluate on validation set
         valid_loss, predictions = validate(val_loader, model, criterion,
-                                                  njoints, debug, flip)
+                                           njoints, debug, flip)
         if wandb_flag:
             wandb.log({"valid_loss": valid_loss})
         # append logger file
@@ -201,8 +217,10 @@ def main():
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/human36_gaus_2/model_{epoch}.pth')
-        # is_best = valid_acc > best_acc
+            result_path = Path(f'results/human36_gaus_2/model_{epoch}.pth')
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), str(result_path))
+            # is_best = valid_acc > best_acc
             best_loss = min(valid_loss, best_loss)
         # save_checkpoint({
         #     'epoch': epoch + 1,
@@ -214,8 +232,8 @@ def main():
         # torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/model_{epoch}.pth')
     logger.close()
 
-    # logger.plot(['Train Acc', 'Val Acc'])
-    # savefig(os.path.join(args.checkpoint, 'log.eps'))
+    logger.plot(['Train Acc', 'Val Acc'])
+    savefig('log.png')
 
 
 def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
@@ -230,10 +248,10 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
     end = time.time()
 
     gt_win, pred_win = None, None
-    bar = Bar('Train', max=len(train_loader))
+    bar = tqdm.tqdm(total=len(train_loader), desc='Train')
     # for i, (input, target, meta) in enumerate(tqdm(train_loader,0)):
-    for i, data in enumerate(tqdm(train_loader,0)):
-    # for i, (input, target, meta) in enumerate(train_loader): 3tqdm added
+    for i, data in enumerate(train_loader):
+        # for i, (input, target, meta) in enumerate(train_loader): 3tqdm added
         # measure data loading time
         data_time.update(time.time() - end)
         input = data['image']
@@ -246,18 +264,19 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
 
         # compute output
         # import pdb; pdb.set_trace()
-        input = input.permute(0,3,1,2)
+        # input = input.permute(0, 3, 1, 2)
         output = model(input)
+
         if type(output) == list:  # multiple output
             loss = 0
             for o in output:
                 loss += criterion(o, target, target_weight)
-            output = output[-1]
+            output = output[0]
         else:  # single output
             loss = criterion(output, target, target_weight)
-        # acc = accuracy(output, target, idx)
+        acc = accuracy(output, target, idx)
 
-        if debug: # visualize groundtruth and predictions
+        if debug:  # visualize groundtruth and predictions
             gt_batch_img = batch_with_heatmap(input, target)
             pred_batch_img = batch_with_heatmap(input, output)
             if not gt_win or not pred_win:
@@ -275,7 +294,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
 
         # measure accuracy and record loss
         losses.update(loss.item(), input.size(0))
-        # acces.update(acc[0], input.size(0))
+        acces.update(acc[0], input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -287,19 +306,20 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
         end = time.time()
 
         # plot progress
-        bar.suffix  = '({batch}/{size}) Data: {data:.6f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | Acc: {acc: .4f}'.format(
-                    batch=i + 1,
-                    size=len(train_loader),
-                    data=data_time.val,
-                    bt=batch_time.val,
-                    total=bar.elapsed_td,
-                    eta=bar.eta_td,
-                    loss=losses.avg,
-                    acc=acces.avg
-                    )
-        bar.next()
+        description = '({batch}/{size}) Data: {data:.6f}s | Batch: {bt:.3f}s | Total: {total:} | Loss: {loss:.4f} | Acc: {acc: .4f}'.format(
+            batch=i + 1,
+            size=len(train_loader),
+            data=data_time.val,
+            bt=batch_time.val,
+            total=bar.total,
+            # eta=bar.eta_td,
+            loss=losses.avg,
+            acc=acces.avg
+        )
+        bar.set_description(description)
+        bar.update()
 
-    bar.finish()
+    bar.close()
     return losses.avg
 
 
@@ -317,10 +337,10 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
 
     gt_win, pred_win = None, None
     end = time.time()
-    bar = Bar('Eval ', max=len(val_loader))
+    bar = tqdm.tqdm(desc='Eval', total=len(val_loader))
     with torch.no_grad():
-        for i, data in enumerate(tqdm(val_loader,0)):
-        # for i, (input, target, meta) in enumerate(val_loader): 3tqdm added
+        for i, data in enumerate(val_loader):
+            # for i, (input, target, meta) in enumerate(val_loader): 3tqdm added
             # measure data loading time
             data_time.update(time.time() - end)
             input = data['image']
@@ -330,10 +350,9 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             target_weight = torch.ones(target.size(0), target.size(1), 1)
             target_weight = target_weight.to(device, non_blocking=True)
 
-            # target_weight = meta['target_weight'].to(device, non_blocking=True)
-            input = input.permute(0,3,1,2)
             # compute output
             output = model(input)
+
             score_map = output[-1].cpu() if type(output) == list else output.cpu()
             if flip:
                 flip_input = torch.from_numpy(fliplr(input.clone().numpy())).float().to(device)
@@ -342,23 +361,19 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
                 flip_output = flip_back(flip_output)
                 score_map += flip_output
 
-
-
             if type(output) == list:  # multiple output
                 loss = 0
                 for o in output:
                     loss += criterion(o, target, target_weight)
-                output = output[-1]
             else:  # single output
                 loss = criterion(output, target, target_weight)
 
-            # acc = accuracy(score_map, target.cpu(), idx)
+            acc = accuracy(score_map, target.cpu(), idx)
 
             # generate predictions
             # preds = final_preds(score_map, meta['center'], meta['scale'], [64, 64])
             # for n in range(score_map.size(0)):
             #     predictions[meta['index'][n], :, :] = preds[n, :, :]
-
 
             if debug:
                 gt_batch_img = batch_with_heatmap(input, target)
@@ -376,27 +391,32 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
 
             # measure accuracy and record loss
             losses.update(loss.item(), input.size(0))
-            # acces.update(acc[0], input.size(0))
+            acces.update(acc[0], input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
             end = time.time()
 
             # plot progress
-            bar.suffix  = '({batch}/{size}) Data: {data:.6f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | Acc: {acc: .4f}'.format(
-                        batch=i + 1,
-                        size=len(val_loader),
-                        data=data_time.val,
-                        bt=batch_time.avg,
-                        total=bar.elapsed_td,
-                        eta=bar.eta_td,
-                        loss=losses.avg,
-                        acc=acces.avg
-                        )
-            bar.next()
+            description = '({batch}/{size}) Data: {data:.6f}s | Batch: {bt:.3f}s | Total: {total:} | Loss: {loss:.4f} | Acc: {acc: .4f}'.format(
+                batch=i + 1,
+                size=len(val_loader),
+                data=data_time.val,
+                bt=batch_time.val,
+                total=bar.total,
+                # eta=bar.eta_td,
+                loss=losses.avg,
+                acc=acces.avg
+            )
+            bar.set_description(description)
+            bar.update()
 
-        bar.finish()
+        # show(input[0] + 0.5, output[0][0], target[0])
+        show_heatmap(output[0][0], target[0])
+
+        bar.close()
     return losses.avg, predictions
+
 
 if __name__ == '__main__':
     # parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')

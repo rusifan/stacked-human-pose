@@ -1,8 +1,11 @@
+from pathlib import Path
+from typing import Optional
+
 import numpy as np
 from matplotlib import pyplot as plt
 
 
-def show(image, heatmap, target):
+def show(image, heatmap, target, output_path: Optional[Path]):
     plt.figure(figsize=(12, 8))
 
     plt.subplot(131)
@@ -21,10 +24,14 @@ def show(image, heatmap, target):
     image = np.transpose(image, (1, 2, 0))
     image = np.clip(image, 0, 1)
     plt.imshow(image)
-    plt.show()
+    if output_path is not None:
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        plt.savefig(str(output_path))
+    else:
+        plt.show()
 
 
-def show_heatmap(heatmap, target):
+def show_heatmap(heatmap, target, output_path: Path):
     plt.figure(figsize=(20, 8))
 
     heatmap = heatmap.detach().cpu().numpy()
@@ -36,4 +43,8 @@ def show_heatmap(heatmap, target):
     for joint_i, joint_map in enumerate(target):
         plt.subplot(2, 16, 16 + joint_i + 1)
         plt.imshow(joint_map)
-    plt.show()
+    if output_path is not None:
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        plt.savefig(str(output_path))
+    else:
+        plt.show()

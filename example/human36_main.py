@@ -182,12 +182,12 @@ def main():
     evaluate = False
     if evaluate:
         print('\nEvaluation only')
-        loss, acc, predictions = validate(val_loader, model, criterion, njoints,
+        loss, acc, predictions = validate(val_loader, model, criterion, njoints, -1,
                                           args.debug, args.flip)
         save_pred(predictions, checkpoint=args.checkpoint)
         return
 
-    validate(val_loader, model, criterion, njoints, debug, flip)
+    validate(val_loader, model, criterion, njoints, -1, debug, flip)
 
     # train and eval
     lr = 2.5e-4
@@ -208,7 +208,7 @@ def main():
             wandb.log({"train_loss": train_loss})
         # evaluate on validation set
         valid_loss, predictions = validate(val_loader, model, criterion,
-                                           njoints, debug, flip)
+                                           njoints, epoch, debug, flip)
         if wandb_flag:
             wandb.log({"valid_loss": valid_loss})
         # append logger file
@@ -232,8 +232,10 @@ def main():
         # torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/pytorch-pose/results/model_{epoch}.pth')
     logger.close()
 
-    logger.plot(['Train Acc', 'Val Acc'])
-    savefig('log.png')
+    logger.plot(['Train Loss', 'Val Loss'])
+    log_path = Path('./results/vis/log.png')
+    log_path.parent.mkdir(exist_ok=True, parents=True)
+    savefig(str(log_path))
 
 
 def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
@@ -271,7 +273,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
             loss = 0
             for o in output:
                 loss += criterion(o, target, target_weight)
-            output = output[0]
+            output = output[-1]
         else:  # single output
             loss = criterion(output, target, target_weight)
         acc = accuracy(output, target, idx)
@@ -323,7 +325,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
     return losses.avg
 
 
-def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
+def validate(val_loader, model, criterion, num_classes, epoch, debug=False, flip=True):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -411,8 +413,8 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             bar.set_description(description)
             bar.update()
 
-        # show(input[0] + 0.5, output[0][0], target[0])
-        show_heatmap(output[0][0], target[0])
+        show(input[0] + 0.5, output[0][0], target[0], Path(f'./results/vis/full/{epoch}_epoch.png'))
+        show_heatmap(output[-1][0], target[0], Path(f'./results/vis/heatmap/{epoch}_epoch.png'))
 
         bar.close()
     return losses.avg, predictions

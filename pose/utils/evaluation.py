@@ -1,12 +1,7 @@
 from __future__ import absolute_import
 
-import math
-import numpy as np
-import matplotlib.pyplot as plt
-from random import randint
-
 from .misc import *
-from .transforms import transform, transform_preds
+from .transforms import transform_preds
 
 __all__ = ['accuracy', 'AverageMeter']
 
@@ -61,7 +56,7 @@ def accuracy(output, target, idxs, thr=0.5):
     acc = torch.zeros(len(idxs)+1)
     avg_acc = 0
     cnt = 0
-    import pdb;pdb.set_trace()
+
     for i in range(len(idxs)):
         acc[i+1] = dist_acc(dists[idxs[i]-1])
         if acc[i+1] >= 0:

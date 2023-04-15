@@ -1,0 +1,10 @@
+matplotlib
+torch==1.11
+torchvision==0.12.0
+wandb
+tqdm
+scipy
+opencv-python
+imutils
+easydict
+progress

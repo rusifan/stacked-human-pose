@@ -109,7 +109,7 @@ def blur_heatmaps(heatmaps):
     for k in range(len(heatmaps)):
         if heatmaps_blurred[k].max() == 1:
             # heatmaps_blurred[k] = cv2.GaussianBlur(heatmaps[k], (51, 51), 1)
-            heatmaps_blurred[k] = cv2.GaussianBlur(heatmaps[k], (0, 0), 2)
+            heatmaps_blurred[k] = cv2.GaussianBlur(heatmaps[k], (0, 0), 1)
             heatmaps_blurred[k] = heatmaps_blurred[k] / heatmaps_blurred[k].max()
     return heatmaps_blurred
 

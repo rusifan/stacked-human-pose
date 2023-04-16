@@ -13,6 +13,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.parallel
 import torch.optim
+import _init_paths
 
 import pose.losses as losses
 import pose.models as models
@@ -64,10 +65,10 @@ def load_model(weight_path: Optional[Path]):
 def main():
     global best_loss
     global idx
-    train_batch = 8
-    test_batch = 8
+    train_batch = 16
+    test_batch = 16
     workers = 1
-    epochs = 5
+    epochs = 100
     schedule = [60, 90]
     gamma = 0.1
     sigma_decay = 0
@@ -75,11 +76,11 @@ def main():
     flip = False
     train_flag = True
     test_flag = True
-    wandb_flag = False
+    wandb_flag = True
     annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
     annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
-    # root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
-    root_data_path = "./data/human3.6/"
+    root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+    # root_data_path = "./data/human3.6/"
     # idx is the index of joints used to compute accuracy
     # if args.dataset in ['mpii', 'lsp']:
     #     idx = [1,2,3,4,5,6,11,12,15,16]
@@ -105,11 +106,12 @@ def main():
     # model = HourglassNet(1,num_stacks=4, num_blocks=1, num_classes=17)
 
     # model = load_model(weight_path=Path("./checkpoint/mpii/model_35.pth"))
-    model = load_model(weight_path=None)
+    checkpoint = '/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth'
+    model = load_model(weight_path=checkpoint)
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_stacked", entity="nafisur")
-        wandb.run.name = "stack_4_human36m_pretrained_gauss_2"
+        wandb.run.name = "stack_4_human36m_mpii_pretrained"
         wandb.run.save()
         wandb.watch(model)
     # define loss function (criterion) and optimizer
@@ -204,11 +206,13 @@ def main():
         if train_flag:
             train_loss = train(train_loader, model, criterion, optimizer,
                                debug, flip)
+            print('Train Loss: %.8f' % (train_loss))
         if wandb_flag:
             wandb.log({"train_loss": train_loss})
         # evaluate on validation set
         valid_loss, predictions = validate(val_loader, model, criterion,
                                            njoints, debug, flip)
+        print('Valid Loss: %.8f' % (valid_loss))
         if wandb_flag:
             wandb.log({"valid_loss": valid_loss})
         # append logger file
@@ -217,7 +221,7 @@ def main():
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            result_path = Path(f'results/human36_gaus_2/model_{epoch}.pth')
+            result_path = Path(f'results/human36_gaus_1/model_{epoch}.pth')
             result_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(model.state_dict(), str(result_path))
             # is_best = valid_acc > best_acc

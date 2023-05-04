@@ -115,3 +115,8 @@ ENV/
 
 checkpoint/
 data/
+test_img/
+log.png
+new_srun.sh
+A100_40GB.sh
+visualize.sh

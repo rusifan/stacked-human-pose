@@ -198,8 +198,13 @@ class Mpii(data.Dataset):
                 target_weight[i, 0] *= vis
 
         # Meta info
+        left_top = [0.0, 0,0]
+        ratio_x = 1
+        ratio_y = 1
         meta = {'index' : index, 'center' : c, 'scale' : s, 'img_path':img_path,
-        'pts' : pts, 'tpts' : tpts, 'target_weight': target_weight}
+        'pts' : pts, 'tpts' : tpts, 'target_weight': target_weight,
+        'left_top': left_top, 'ratio_x': ratio_x, 'ratio_y': ratio_y} #newly added for making the network work
+
 
         return inp, target, meta
 

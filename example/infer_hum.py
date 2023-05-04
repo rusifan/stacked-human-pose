@@ -152,7 +152,8 @@ def main():
     root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
     # create model
     # model = hg(num_stacks=4, num_blocks=1, num_classes=17)
-    model = hg(num_stacks=4, num_blocks=1, num_classes=16)
+    # model = hg(num_stacks=4, num_blocks=1, num_classes=16)
+    model = hg(num_stacks=8, num_blocks=1, num_classes=16)
     # model = torch.nn.DataParallel(model).to(device)
     model = model.to(device)
 
@@ -181,7 +182,8 @@ def main():
     )
     # checkpoint = torch.load('/netscratch/nafis/human-pose/pytorch-pose/results/human36/model_6.pth')
     # checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth")
-    checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/human36_pre/model_0.pth")
+    # checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/human36_pre/model_0.pth")
+    checkpoint = torch.load("/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked8_16kps_fix/model_42.pth") #mpii only   
     # checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps_fix/model_27.pth")
     from collections import OrderedDict
     new_state_dict = OrderedDict()
@@ -206,11 +208,12 @@ def main():
     # load params
     mgcn.load_state_dict(new_state_dict)
     # train and eval
-    filename = '/netscratch/nafis/human-pose/pytorch-pose/results/vis/'
+    # filename = '/netscratch/nafis/human-pose/pytorch-pose/results/vis/'
+    filename = '/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/'
     data = train_dataset.__getitem__(0)
     img = data['image']
     heatmap = data['heatmap']
-    kps_3d_u = data['kp_3d_u']
+    # kps_3d_u = data['kp_3d_u']
     kps_3d = data['kp_3d']
     ratio_x = data['ratio_x']
     ratio_y = data['ratio_y']
@@ -221,8 +224,8 @@ def main():
     cv2.imwrite(filename + 'res_test_6.jpg', cvimg)
     cvimg_2 = cvimg.copy()
     # import pdb;pdb.set_trace()
-    img = img.unsqueeze(0)
-    img = img.permute(0,3,1,2).to(device)
+    img = img.unsqueeze(0).to(device)
+    # img = img.permute(0,3,1,2).to(device)
     output = model(img)
     output = output[-1]
     output = output.unsqueeze(4)
@@ -281,7 +284,7 @@ def main():
     predicted_out3d = predicted_out3d.permute(1,0)
     predicted_out3d = predicted_out3d.cpu().detach().numpy()
     predicted_out3d[1:] += predicted_out3d[:1]
-    kps_3d_u[1:] += kps_3d_u[:1]
+    # kps_3d_u[1:] += kps_3d_u[:1]
     # import pdb;pdb.set_trace()
     f = np.array([[1145.51133842],[1144.77392808]]) #for camera  60457274
     c = np.array([[514.96819732], [501.88201854]])  #for camera  60457274

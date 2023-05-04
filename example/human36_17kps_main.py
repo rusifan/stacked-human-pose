@@ -18,7 +18,7 @@ import _init_paths
 import pose.losses as losses
 import pose.models as models
 import pose.datasets as datasets
-from pose.datasets.human36_dataloader import hum36m_dataloader
+from pose.datasets.human17kps import hum36m_dataloader
 from pose.models.hourglass import *
 from pose.utils.evaluation import accuracy, AverageMeter
 from pose.utils.imutils import batch_with_heatmap
@@ -47,7 +47,7 @@ cudnn.benchmark = True  # There is BN issue for early version of PyTorch
 
 
 def load_model(weight_path: Optional[Path]):
-    model = hg(num_stacks=4, num_blocks=1, num_classes=16)
+    model = hg(num_stacks=4, num_blocks=1, num_classes=17)
     if weight_path is not None:
         checkpoint = torch.load(str(weight_path))
 
@@ -65,7 +65,7 @@ def load_model(weight_path: Optional[Path]):
 def main():
     global best_loss
     global idx
-    train_batch = 32
+    train_batch = 16
     test_batch = 16
     workers = 1
     epochs = 100
@@ -96,7 +96,7 @@ def main():
     #     mkdir_p(args.checkpoint)
 
     # create model
-    njoints = 16
+    njoints = 17
 
     # print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
     # model = models.__dict__[args.arch](num_stacks=args.stacks,
@@ -107,11 +107,11 @@ def main():
 
     # model = load_model(weight_path=Path("./checkpoint/mpii/model_35.pth"))
     checkpoint = '/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth'
-    model = load_model(weight_path=checkpoint)
+    model = load_model(weight_path=None)
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_human", entity="nafisur")
-        wandb.run.name = "stack_4_mpii_pretrained"
+        wandb.run.name = "stack_4_17kps"
         wandb.run.save()
         wandb.watch(model)
     # define loss function (criterion) and optimizer
@@ -393,7 +393,7 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             bar.update()
 
         # show(input[0] + 0.5, output[0][0], target[0])
-        show_heatmap(output[0][0], target[0])
+        # show_heatmap(output[0][0], target[0])
 
         bar.close()
     return losses.avg, predictions

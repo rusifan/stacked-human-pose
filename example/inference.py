@@ -11,6 +11,7 @@ import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.datasets as datasets
 import numpy as np
+import cv2
 
 import _init_paths
 from pose import Bar
@@ -26,6 +27,19 @@ import pose.losses as losses
 import torch.nn as nn
 from scipy.signal import find_peaks
 # from pose.datasets.human36_dataloader import hum36m_dataloader
+
+
+DATASET_MEANS = [0.3950, 0.4323, 0.2954]
+DATASET_STDS = [0.1966, 0.1734, 0.1836]
+
+def color_normalize(x, mean, std):
+    if x.size(0) == 1:
+        x = x.repeat(3, 1, 1)
+
+    for t, m, s in zip(x, mean, std):
+        t.sub_(m)
+    return x
+
 
 def soft_argmax(voxels):
 	"""
@@ -150,16 +164,16 @@ def main(args):
           % (sum(p.numel() for p in model.parameters())/1000000.0))
 
     # create data loader
-    train_dataset = datasets.__dict__[args.dataset](is_train=True, **vars(args))
-    # r = train_dataset.__getitem__(0)
-    # print(r[0].shape) torch.Size([3, 256, 256])
-    # print(r[1].shape) torch.Size([16, 64, 64])
-    # import pdb;pdb.set_trace()
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=args.train_batch, shuffle=True,
-        num_workers=args.workers, pin_memory=True
-    )
+    # train_dataset = datasets.__dict__[args.dataset](is_train=True, **vars(args))
+    # # r = train_dataset.__getitem__(0)
+    # # print(r[0].shape) torch.Size([3, 256, 256])
+    # # print(r[1].shape) torch.Size([16, 64, 64])
+    # # import pdb;pdb.set_trace()
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset,
+    #     batch_size=args.train_batch, shuffle=True,
+    #     num_workers=args.workers, pin_memory=True
+    # )
 
     val_dataset = datasets.__dict__[args.dataset](is_train=False, **vars(args))
     val_loader = torch.utils.data.DataLoader(
@@ -183,7 +197,9 @@ def main(args):
 
     # checkpoint = torch.load('/netscratch/nafis/human-pose/pytorch-pose/load_check/mpii/hg_s8_b1/checkpoint.pth.tar')
     # checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_14kps/model_35.pth")
-    checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth")
+    # checkpoint = torch.load("/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth")
+    checkpoint = torch.load("/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked8_16kps_fix/model_42.pth") #mpii only   
+
     # /netscratch/nafis/human-pose/real_time_pose/results/delete/res_test_6.jpg
     # model.load_state_dict(checkpoint['state_dict'])
     from collections import OrderedDict
@@ -195,22 +211,35 @@ def main(args):
         new_state_dict[name] = v
     # load params
     model.load_state_dict(new_state_dict)
-
-    import cv2
+    image_name = '/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/test_img/test.png' #for test_img
+    cvimg = cv2.imread(image_name, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    img = cv2.resize(cvimg, (256, 256))
+    # img = img.transpose(2, 0, 1)
+    img = np.transpose(img, (2, 0, 1))
+    img = img.astype(np.float32)
+    img /= 255
+    img = torch.from_numpy(img).float().cuda()
+    img = color_normalize(img, DATASET_MEANS, DATASET_STDS)
+    img = img.unsqueeze(0)
     # r = val_dataset.__getitem__(100)
     # output = model(r[0].unsqueeze(0).to(device))
     # gt_heatmap = r[1]
     r = val_dataset.__getitem__(100)
-    output = model(r[0].unsqueeze(0).to(device))
+    # output = model(r[0].unsqueeze(0).to(device))
+    output = model(img)
     gt_heatmap = r[1]
     image_path = r[2]['img_path']
     kps = r[2]['pts']
-    img = cv2.imread(image_path)
+    # img = cv2.imread(image_path)
+    output = output[-1].squeeze().cpu().detach().numpy()
+    plt.imshow(output.sum(axis=0))
+    plt.savefig('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/only_sthg_heatmap_test_1.png')
+    plt.clf()
 
     #plot the keypoints on the images
-    for i in range(16):
-        tmp = cv2.circle(cv2.imread(image_path), (int(kps[i][0]), int(kps[i][1])), 4, (0, 0, 255), -1)
-        cv2.imwrite(filename + f'order{i}.jpg', tmp)
+    # for i in range(16):
+    #     tmp = cv2.circle(cvimg, (int(kps[i][0]), int(kps[i][1])), 4, (0, 0, 255), -1)
+    # cv2.imwrite(filename + f'order{i}.jpg', tmp)
     
     # for human 36
     # annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"

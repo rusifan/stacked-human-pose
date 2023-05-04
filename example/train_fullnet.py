@@ -1,155 +1,99 @@
 from __future__ import print_function, absolute_import
-
-import os
-import time
+import torch
+import torch.nn as nn
 from pathlib import Path
 from typing import Optional
+import os
+import time
 from collections import OrderedDict
-
+import _init_paths
+import tqdm
 import tqdm
 import wandb
 import matplotlib.pyplot as plt
-import torch
-import torch.backends.cudnn as cudnn
-import torch.nn.parallel
-import torch.optim
-import _init_paths
 
+import numpy as np
 import pose.losses as losses
 import pose.models as models
 import pose.datasets as datasets
-from pose.datasets.human36_dataloader import hum36m_dataloader
-from pose.models.hourglass import *
+from pose.datasets.human36_dataloader import hum36m_dataloader #16kps
 from pose.utils.evaluation import accuracy, AverageMeter
 from pose.utils.imutils import batch_with_heatmap
 from pose.utils.logger import Logger, savefig
 from pose.utils.misc import save_pred, adjust_learning_rate
 from pose.utils.osutils import isfile, join
 from pose.utils.transforms import fliplr, flip_back
-from pose.utils.visualize import show, show_heatmap
+from pose.utils.visualize import show, show_heatmap 
+from mynet import MyNet
+# from mynet_8hg_4mgcn import MyNet #8hg_4mgcn
 
-# get model names and dataset names
-model_names = sorted(name for name in models.__dict__
-                     if name.islower() and not name.startswith("__")
-                     and callable(models.__dict__[name]))
-
-dataset_names = sorted(name for name in datasets.__dict__
-                       if name.islower() and not name.startswith("__")
-                       and callable(datasets.__dict__[name]))
-
-# init global variables
-best_loss = 10000
+best_loss = 1e10
 idx = []
-
-# select proper device to run
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-cudnn.benchmark = True  # There is BN issue for early version of PyTorch
 
-
-def load_model(weight_path: Optional[Path]):
-    model = hg(num_stacks=4, num_blocks=1, num_classes=16)
-    if weight_path is not None:
-        checkpoint = torch.load(str(weight_path))
-
-        new_state_dict = OrderedDict()
-        for k, v in checkpoint.items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
-        # load params
-        model.load_state_dict(new_state_dict)
-
-    model = torch.nn.DataParallel(model).to(device)
-    return model
-
+def mpjpe(predicted, target):
+    """
+    Mean per-joint position error (i.e. mean Euclidean distance),
+    often referred to as "Protocol #1" in many papers.
+    """
+    assert predicted.shape == target.shape
+    return torch.mean(torch.norm(predicted - target, dim=len(target.shape) - 1))
 
 def main():
     global best_loss
     global idx
     train_batch = 32
-    test_batch = 16
+    test_batch = 32
     workers = 1
     epochs = 100
+    lr = 2.5e-4
     schedule = [60, 90]
     gamma = 0.1
     sigma_decay = 0
+    njoints = 16
     debug = False
     flip = False
     train_flag = True
     test_flag = True
     wandb_flag = True
+    run_name = "4stack_4MGCN"
     annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
     annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
     root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
-    # root_data_path = "./data/human3.6/"
-    # idx is the index of joints used to compute accuracy
-    # if args.dataset in ['mpii', 'lsp']:
-    #     idx = [1,2,3,4,5,6,11,12,15,16]
-    # elif args.dataset == 'coco':
-    #     idx = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]
-    idx = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
-    # else:
-    #     print("Unknown dataset: {}".format(args.dataset))
-    #     assert False
 
-    # create checkpoint dir
-    # if not isdir(args.checkpoint):
-    #     mkdir_p(args.checkpoint)
-
+    log_path = Path('./checkpoint/h36m/test/log.txt')
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = Logger(str(log_path), title='human3.6')
+    logger.set_names(['Epoch', 'LR', 'Train Loss', 'Val Loss',
+                        'Train Acc', 'Val Acc'])
     # create model
-    njoints = 16
+    print("=> creating model ...")
+    adj = np.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results/adj_4_16.npy')
+    adj = torch.from_numpy(adj).to('cuda')
+    model = MyNet(adj, block=2)
+    # model = MyNet(adj, block=4, num_stacks=8) # 8stack and 4 gcn
+    # model = MyNet(adj, block=4, num_stacks=4) # 8stack and 4 gcn
+    model = torch.nn.DataParallel(model).cuda()
 
-    # print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
-    # model = models.__dict__[args.arch](num_stacks=args.stacks,
-    #                                    num_blocks=args.blocks,
-    #                                    num_classes=njoints,
-    #                                    resnet_layers=args.resnet_layers)
-    # model = HourglassNet(1,num_stacks=4, num_blocks=1, num_classes=17)
-
-    # model = load_model(weight_path=Path("./checkpoint/mpii/model_35.pth"))
-    checkpoint = '/netscratch/nafis/human-pose/pytorch-pose/results/stacked4_16kps/model_35.pth'
-    model = load_model(weight_path=checkpoint)
+    #experiment tracking
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_human", entity="nafisur")
-        wandb.run.name = "stack_4_mpii_pretrained"
+        wandb.run.name = run_name
         wandb.run.save()
         wandb.watch(model)
-    # define loss function (criterion) and optimizer
-    criterion = losses.JointsMSELoss().to(device)
+    
+    #loss function
+    criterion = losses.JointsMSELoss().to('cuda')
 
-    # if args.solver == 'rms':
+    #optimizer
     optimizer = torch.optim.RMSprop(model.parameters(),
                                     lr=2.5e-4,
                                     momentum=0,
                                     weight_decay=0)
-
-    title = 'juman3.6m'
-    resume = False
-    if resume:
-        if isfile(resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-            logger = Logger(join(args.checkpoint, 'log.txt'), title=title, resume=True)
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-    else:
-        log_path = Path('./checkpoint/h36m/test/log.txt')
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        logger = Logger(str(log_path), title=title)
-        logger.set_names(['Epoch', 'LR', 'Train Loss', 'Val Loss',
-                          'Train Acc', 'Val Acc'])
-
-    print('    Total params: %.2fM'
-          % (sum(p.numel() for p in model.parameters()) / 1000000.0))
-
-    # create data loader
-    # train_dataset = datasets.__dict__[args.dataset](is_train=True, **vars(args))
+    
+    #data loader
+    print("=> loading data ...")
     train_dataset = hum36m_dataloader(root_data_path, annotation_path_train, True, [1.1, 2.0], False, 5, flip_prob=1)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -157,7 +101,6 @@ def main():
         num_workers=workers, pin_memory=True
     )
 
-    # val_dataset = datasets.__dict__[args.dataset](is_train=False, **vars(args))
     val_dataset = hum36m_dataloader(root_data_path, annotation_path_test, True, [1.1, 2.0], False, 5, flip_prob=1)
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
@@ -165,19 +108,6 @@ def main():
         num_workers=workers, pin_memory=True
     )
 
-    # evaluation only
-    evaluate = False
-    if evaluate:
-        print('\nEvaluation only')
-        loss, acc, predictions = validate(val_loader, model, criterion, njoints,
-                                          args.debug, args.flip)
-        save_pred(predictions, checkpoint=args.checkpoint)
-        return
-
-    # validate(val_loader, model, criterion, njoints, debug, flip)
-
-    # train and eval
-    lr = 2.5e-4
     for epoch in range(epochs):
         lr = adjust_learning_rate(optimizer, epoch, lr, schedule, gamma)
         print('\nEpoch: %d | LR: %.8f' % (epoch + 1, lr))
@@ -196,26 +126,21 @@ def main():
             wandb.log({"train_loss": train_loss})
         # evaluate on validation set
         valid_loss, predictions = validate(val_loader, model, criterion,
-                                           njoints, debug, flip)
-        print('Valid Loss: %.8f' % (valid_loss))
+                                           njoints, epoch, debug, flip)
+        print('Valid Loss(mpjpe) in mm: %.8f' % (valid_loss * 1000))
         if wandb_flag:
-            wandb.log({"valid_loss": valid_loss})
+            wandb.log({"Valid Loss(mpjpe) in mm": valid_loss * 1000})
         # append logger file
         train_acc, valid_acc = 0, 0
         logger.append([epoch + 1, lr, train_loss, valid_loss, train_acc, valid_acc])
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            result_path = Path(f'results/pre_mpii_human/model_{epoch}.pth')
+            result_path = Path(f'results/stgh4_mgcn4/model_{epoch}.pth')
             result_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(model.state_dict(), str(result_path))
             # is_best = valid_acc > best_acc
             best_loss = min(valid_loss, best_loss)
-    logger.close()
-
-    logger.plot(['Train Acc', 'Val Acc'])
-    savefig('log.png')
-
 
 def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
     batch_time = AverageMeter()
@@ -232,50 +157,44 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
     bar = tqdm.tqdm(total=len(train_loader), desc='Train')
     # for i, (input, target, meta) in enumerate(tqdm(train_loader,0)):
     for i, data in enumerate(train_loader):
-        # for i, (input, target, meta) in enumerate(train_loader): 3tqdm added
         # measure data loading time
         data_time.update(time.time() - end)
+        
+        #get the data
         input = data['image']
         target = data['heatmap']
-        # import pdb; pdb.set_trace()
+        ratio_x = data['ratio_x'].to('cuda')
+        ratio_y = data['ratio_y'].to('cuda')
+        left_top = data['leftTop']
+        gt_3d = data['kp_3d'].to('cuda')
+        N = input.size(0)
+
         input, target = input.to(device), target.to(device, non_blocking=True)
-        # torch ones of shape [batch_size, 14, 1]
         target_weight = torch.ones(target.size(0), target.size(1), 1)
         target_weight = target_weight.to(device, non_blocking=True)
-
+        
         # compute output
-        # import pdb; pdb.set_trace()
-        # input = input.permute(0, 3, 1, 2)
-        output = model(input)
+        predicted_out3d, output = model(input,left_top,ratio_x,ratio_y)
+        # import pdb;pdb.set_trace()
+        predicted_out3d = predicted_out3d.permute(0, 2, 3, 4, 1).contiguous().view(N, -1, 16, 3)
+        gt_3d = gt_3d.unsqueeze(1)
 
+        # measure accuracy and record loss
         if type(output) == list:  # multiple output
-            loss = 0
+            loss_2d = 0
             for o in output:
-                loss += criterion(o, target, target_weight)
+                loss_2d += criterion(o, target, target_weight)
             output = output[-1]
         else:  # single output
-            loss = criterion(output, target, target_weight)
-        acc = accuracy(output, target, idx)
-
-        if debug:  # visualize groundtruth and predictions
-            gt_batch_img = batch_with_heatmap(input, target)
-            pred_batch_img = batch_with_heatmap(input, output)
-            if not gt_win or not pred_win:
-                ax1 = plt.subplot(121)
-                ax1.title.set_text('Groundtruth')
-                gt_win = plt.imshow(gt_batch_img)
-                ax2 = plt.subplot(122)
-                ax2.title.set_text('Prediction')
-                pred_win = plt.imshow(pred_batch_img)
-            else:
-                gt_win.set_data(gt_batch_img)
-                pred_win.set_data(pred_batch_img)
-            plt.pause(.05)
-            plt.draw()
+            loss_2d = criterion(output, target, target_weight)
+        loss_3d = mpjpe(predicted_out3d, gt_3d)
+        # import pdb;pdb.set_trace()
+        loss = 100*loss_2d + loss_3d # equal weight
+        # acc = accuracy(output, target, idx)
 
         # measure accuracy and record loss
         losses.update(loss.item(), input.size(0))
-        acces.update(acc[0], input.size(0))
+        # acces.update(acc[0], input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -303,8 +222,7 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
     bar.close()
     return losses.avg
 
-
-def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
+def validate(val_loader, model, criterion, num_classes, epoch, debug=False, flip=True):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -326,13 +244,21 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             data_time.update(time.time() - end)
             input = data['image']
             target = data['heatmap']
+            ratio_x = data['ratio_x'].to('cuda')
+            ratio_y = data['ratio_y'].to('cuda')
+            left_top = data['leftTop']
+            gt_3d = data['kp_3d'].to('cuda')
+            N = input.size(0)
+
             input = input.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             target_weight = torch.ones(target.size(0), target.size(1), 1)
             target_weight = target_weight.to(device, non_blocking=True)
 
             # compute output
-            output = model(input)
+            predicted_out3d, output = model(input,left_top,ratio_x,ratio_y)
+            predicted_out3d = predicted_out3d.permute(0, 2, 3, 4, 1).contiguous().view(N, -1, 16, 3)
+            gt_3d = gt_3d.unsqueeze(1)
 
             score_map = output[-1].cpu() if type(output) == list else output.cpu()
             if flip:
@@ -343,11 +269,12 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
                 score_map += flip_output
 
             if type(output) == list:  # multiple output
-                loss = 0
+                loss_2d = 0
                 for o in output:
-                    loss += criterion(o, target, target_weight)
+                    loss_2d += criterion(o, target, target_weight)
             else:  # single output
-                loss = criterion(output, target, target_weight)
+                loss_2d = criterion(output, target, target_weight)
+            loss_3d = mpjpe(predicted_out3d, gt_3d)
 
             acc = accuracy(score_map, target.cpu(), idx)
 
@@ -356,22 +283,8 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             # for n in range(score_map.size(0)):
             #     predictions[meta['index'][n], :, :] = preds[n, :, :]
 
-            if debug:
-                gt_batch_img = batch_with_heatmap(input, target)
-                pred_batch_img = batch_with_heatmap(input, score_map)
-                if not gt_win or not pred_win:
-                    plt.subplot(121)
-                    gt_win = plt.imshow(gt_batch_img)
-                    plt.subplot(122)
-                    pred_win = plt.imshow(pred_batch_img)
-                else:
-                    gt_win.set_data(gt_batch_img)
-                    pred_win.set_data(pred_batch_img)
-                plt.pause(.05)
-                plt.draw()
-
             # measure accuracy and record loss
-            losses.update(loss.item(), input.size(0))
+            losses.update(loss_3d.item(), input.size(0))
             acces.update(acc[0], input.size(0))
 
             # measure elapsed time
@@ -393,11 +306,11 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             bar.update()
 
         # show(input[0] + 0.5, output[0][0], target[0])
-        show_heatmap(output[0][0], target[0])
-
+        # show_heatmap(output[0][0], target[0])
+        show(input[0] + 0.5, output[0][0], target[0], Path(f'./results/vis/full_smallerGauss/{epoch}_epoch.png'))
+        show_heatmap(output[-1][0], target[0], Path(f'./results/vis/heatmap_smallerGauss/{epoch}_epoch.png'))
         bar.close()
     return losses.avg, predictions
-
 
 if __name__ == '__main__':
     main()

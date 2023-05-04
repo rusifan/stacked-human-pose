@@ -20,7 +20,7 @@ from torch.utils.data import Dataset
 from pose.datasets.utils import calc_aabb, cut_image, flip_image, reflect_pose, reflect_lsp_kp
 from pose.utils.transforms import color_normalize
 
-N_KEYPOINTS = 16
+N_KEYPOINTS = 17
 N_IMG_CHANNELS = 3
 RAW_IMG_SIZE = 1000
 # MODEL_IMG_SIZE = 56 #56 for resnwt
@@ -239,7 +239,7 @@ class hum36m_dataloader(Dataset):
         kps[:, 0] = kps[:, 0] * ratio_x
         kps[:, 1] = kps[:, 1] * ratio_y
         dst_image = cv2.resize(image, (256, 256), interpolation=cv2.INTER_LINEAR)  # for stacked 256,256
-        kps = human36m_to_common(kps)
+        # kps = human36m_to_common(kps)
 
         heatmaps = vector_to_heatmaps(kps)
         heatmaps = torch.from_numpy(np.float32(heatmaps))
@@ -261,9 +261,9 @@ class hum36m_dataloader(Dataset):
         # max_values =  np.max(kp_3d[:, :3], axis=0)
 
         # kp_3d[:, :3] = (kp_3d[:, :3] - min_values) * 2 / (max_values - min_values) - 1
-        kp_3d[1:] -= kp_3d[:1]
+        # kp_3d[1:] -= kp_3d[:1]
         # import pdb; pdb.set_trace()
-        kp_3d = human36m_to_common(kp_3d)  # for 16 keypoints to match with mpii dataset
+        # kp_3d_u = human36m_to_common(kp_3d)  # for 16 keypoints to match with mpii dataset
 
         # pos_3d[:, 1:] -= pos_3d[:, :1]
         # theta = np.concatenate((trival, pose, shape), axis = 0)
@@ -278,10 +278,10 @@ class hum36m_dataloader(Dataset):
 
         return {
             'image': dst_image,
-            # 'kp_2d': torch.from_numpy(kps).float(),
-            'kp_2d': (kps).float(),
+            'kp_2d': torch.from_numpy(kps).float(),
+            # 'kp_2d': (kps).float(),
             # 'kp_2d_org': (kps_original).float(),
-            'kp_3d': (kp_3d).float(),
+            'kp_3d': torch.from_numpy(kp_3d).float(),
             # 'kp_3d_u': (kp_3d_u).float(),  # for 16 keypoints
             # 'theta': torch.from_numpy(theta).float(),
             'image_name': self.images[index],

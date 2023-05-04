@@ -1,4 +1,5 @@
 from __future__ import print_function, absolute_import
+from collections import OrderedDict
 
 import os
 import argparse
@@ -10,6 +11,7 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim
 import torchvision.datasets as datasets
+import numpy as np
 
 import _init_paths
 from pose import Bar
@@ -24,6 +26,7 @@ import pose.datasets as datasets
 import pose.losses as losses
 import wandb
 from tqdm import tqdm
+from new_mynet import MyNet
 
 # get model names and dataset names
 model_names = sorted(name for name in models.__dict__
@@ -66,17 +69,29 @@ def main(args):
     # create model
     njoints = datasets.__dict__[args.dataset].njoints
 
-    print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
-    model = models.__dict__[args.arch](num_stacks=args.stacks,
-                                       num_blocks=args.blocks,
-                                       num_classes=njoints,
-                                       resnet_layers=args.resnet_layers)
+    # print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
+    # model = models.__dict__[args.arch](num_stacks=args.stacks,
+    #                                    num_blocks=args.blocks,
+    #                                    num_classes=njoints,
+    #                                    resnet_layers=args.resnet_layers)
+    adj = np.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results/adj_4_16.npy')
+    adj = torch.from_numpy(adj).to('cuda')
+    model = MyNet(adj, block=2)
+    # model = torch.nn.DataParallel(model).cuda()
 
-    model = torch.nn.DataParallel(model).to(device)
+    # load pre-trained model
+    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/full_net16kps/model_11.pth') #16kps checkpoint pre trained on mpii
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        name = k[7:] # remove `module.`
+        new_state_dict[name] = v
+    model.load_state_dict(new_state_dict)
+    model = torch.nn.DataParallel(model).cuda()
+
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_human", entity="nafisur")
-        wandb.run.name = "stack_2_16kps_fix"
+        wandb.run.name = "train_fullnet_mpii_only"
         wandb.run.save()
         wandb.watch(model)
     # define loss function (criterion) and optimizer
@@ -175,8 +190,9 @@ def main(args):
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked2_16kps_fix/model_{epoch}.pth')
+            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_{epoch}.pth')
         # is_best = valid_acc > best_acc
+        # /netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_0.pth
             best_loss = min(valid_loss, best_loss)
         # save_checkpoint({
         #     'epoch': epoch + 1,
@@ -212,10 +228,14 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
 
         input, target = input.to(device), target.to(device, non_blocking=True)
         target_weight = meta['target_weight'].to(device, non_blocking=True)
+        left_top = meta['left_top']
+        ratio_x = meta['ratio_x'].to('cuda')
+        ratio_y = meta['ratio_y'].to('cuda')
         # import pdb;pdb.set_trace()
 
         # compute output
-        output = model(input)
+        # output = model(input)
+        predicted_out3d, output = model(input,left_top,ratio_x,ratio_y)
         if type(output) == list:  # multiple output
             loss = 0
             for o in output:
@@ -224,22 +244,6 @@ def train(train_loader, model, criterion, optimizer, debug=False, flip=True):
         else:  # single output
             loss = criterion(output, target, target_weight)
         # acc = accuracy(output, target, idx)
-
-        if debug: # visualize groundtruth and predictions
-            gt_batch_img = batch_with_heatmap(input, target)
-            pred_batch_img = batch_with_heatmap(input, output)
-            if not gt_win or not pred_win:
-                ax1 = plt.subplot(121)
-                ax1.title.set_text('Groundtruth')
-                gt_win = plt.imshow(gt_batch_img)
-                ax2 = plt.subplot(122)
-                ax2.title.set_text('Prediction')
-                pred_win = plt.imshow(pred_batch_img)
-            else:
-                gt_win.set_data(gt_batch_img)
-                pred_win.set_data(pred_batch_img)
-            plt.pause(.05)
-            plt.draw()
 
         # measure accuracy and record loss
         losses.update(loss.item(), input.size(0))
@@ -295,9 +299,13 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             input = input.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             target_weight = meta['target_weight'].to(device, non_blocking=True)
-
+            left_top = meta['left_top']
+            ratio_x = meta['ratio_x'].to('cuda')
+            ratio_y = meta['ratio_y'].to('cuda')
             # compute output
-            output = model(input)
+            # output = model(input)
+            predicted_out3d, output = model(input,left_top,ratio_x,ratio_y)
+
             score_map = output[-1].cpu() if type(output) == list else output.cpu()
             if flip:
                 flip_input = torch.from_numpy(fliplr(input.clone().numpy())).float().to(device)
@@ -322,21 +330,6 @@ def validate(val_loader, model, criterion, num_classes, debug=False, flip=True):
             preds = final_preds(score_map, meta['center'], meta['scale'], [64, 64])
             for n in range(score_map.size(0)):
                 predictions[meta['index'][n], :, :] = preds[n, :, :]
-
-
-            if debug:
-                gt_batch_img = batch_with_heatmap(input, target)
-                pred_batch_img = batch_with_heatmap(input, score_map)
-                if not gt_win or not pred_win:
-                    plt.subplot(121)
-                    gt_win = plt.imshow(gt_batch_img)
-                    plt.subplot(122)
-                    pred_win = plt.imshow(pred_batch_img)
-                else:
-                    gt_win.set_data(gt_batch_img)
-                    pred_win.set_data(pred_batch_img)
-                plt.pause(.05)
-                plt.draw()
 
             # measure accuracy and record loss
             losses.update(loss.item(), input.size(0))
@@ -406,9 +399,9 @@ if __name__ == '__main__':
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
-    parser.add_argument('--train-batch', default=8, type=int, metavar='N',
+    parser.add_argument('--train-batch', default=32, type=int, metavar='N',
                         help='train batchsize')
-    parser.add_argument('--test-batch', default=8, type=int, metavar='N',
+    parser.add_argument('--test-batch', default=32, type=int, metavar='N',
                         help='test batchsize')
     parser.add_argument('--lr', '--learning-rate', default=2.5e-4, type=float,
                         metavar='LR', help='initial learning rate')

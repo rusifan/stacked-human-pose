@@ -1,7 +1,7 @@
+# import _init_paths
 import torch
 import torch.nn as nn
-import _init_paths
-import pose.models as models
+# import pose.models as models
 from model.modulated_gcn import ModulatedGCN
 from pose.models.hourglass import *
 
@@ -39,14 +39,14 @@ def get_state_dict():
     return new_state_dict
 
 class MyNet(nn.Module):
-    def __init__(self, adj, block) -> None:
+    def __init__(self, adj,num_stacks, block) -> None:
         super(MyNet, self).__init__()
-        self.sthg = hg(num_stacks=4, num_blocks=1, num_classes=16)
-        self.sthg.load_state_dict(get_state_dict())
+        self.sthg = hg(num_stacks=num_stacks, num_blocks=1, num_classes=16)
+        # self.sthg.load_state_dict(get_state_dict())
         self.MGCN = ModulatedGCN(adj, 384, num_layers=block, p_dropout=0, nodes_group=None)
         # self.MGCN.load_state_dict(torch.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results_2layers/model_module_gcn_20_eva_xyz_5236.pth'))
 
-    def forward(self, x ,left_top, ratio_x, ratio_y):
+    def forward(self, x ,left_top=[0, 0], ratio_x=1.0, ratio_y=1.0):
         N = x.shape[0]
         heatmaps = self.sthg(x)
         output = heatmaps[-1].unsqueeze(4)

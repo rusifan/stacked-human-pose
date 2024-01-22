@@ -7,6 +7,7 @@
 '''
 from __future__ import print_function, absolute_import
 
+import h5py
 import os
 import random
 from pathlib import Path
@@ -143,6 +144,8 @@ class hum36m_dataloader(Dataset):
         self.pix_format = pix_format
         # self.normalize = normalize
         self.normalize = True  # usually false
+        self.hdf5_path = data_set_path + '/images.hdf5'
+        self.hdf5 = None
         self._load_data_set()
 
         self.mean = DATASET_MEANS
@@ -159,6 +162,7 @@ class hum36m_dataloader(Dataset):
         self.shapes = []
         self.poses = []
         self.leftTop = []
+        # self.hdf5 = h5py.File(self.hdf5_path, 'r')
 
         print('start loading hum3.6m data.')
 
@@ -189,6 +193,8 @@ class hum36m_dataloader(Dataset):
 
             for index in range(l):
                 image_path = Path(os.path.join(self.data_folder, 'images/') + total_image_names[index])
+                # import pdb; pdb.set_trace()
+                # 'S1/S1_Directions_1.54138969/S1_Directions_1.54138969_000001.jpg'
                 if not image_path.exists():
                     continue
                 # kp2d = total_kp2d[index].reshape((-1, 3))
@@ -225,9 +231,11 @@ class hum36m_dataloader(Dataset):
         box = self.boxs[index]
         kp_3d = self.kp3ds[index].copy()
         center = self.poses[index]
+        self.hdf5 = h5py.File(self.hdf5_path, 'r')
 
         scale = np.random.rand(4) * (self.scale_range[1] - self.scale_range[0]) + self.scale_range[0]
-        image, kps, leftTop = cut_image(image_path, kps, scale, box[0], box[1])
+        # image, kps, leftTop = cut_image(image_path, kps, scale, box[0], box[1])
+        image, kps, leftTop = cut_image(image_path, kps, scale, box[0], box[1], self.hdf5)
 
         # image, kps, center = center_crop(image_path, kps, center)
 

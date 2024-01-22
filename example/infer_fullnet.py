@@ -50,18 +50,22 @@ def cam2pixel(cam_coord, f, c): #cam_coord shape (17,3)
 
 
 def main():
-    annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
-    annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
-    root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+    annotation_path_train = "annotation_body3d/fps5/h36m_train.npz"
+    annotation_path_test = "annotation_body3d/fps5/h36m_test.npz"
+    root_data_path = "/netscratch/nafis/human-pose/dataset_hum36m_10f1s"
 
     print("=> creating model ...")
+    num_stack = 2
+    block = 2
+
     adj = np.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results/adj_4_16.npy')
     adj = torch.from_numpy(adj).to('cuda')
-    model = MyNet(adj, block=2)
+    model = MyNet(adj,num_stack, block)
 
     #load pretrained model
     # state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/full_net16kps/model_10.pth') #16kps checkpoint pre trained on mpii
-    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_10.pth') #mpii
+    # state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_10.pth') #mpii
+    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stgh2_mgcn2_5fps/model_87.pth')
     # checked train_fullnet_mpii_only/model_3 which is good generalize and 3d
     # checked train_fullnet_mpii_only/model_6 which is good generalize and 3d
     # checked train_fullnet_mpii_only/model_10 which is good generalize and 3d
@@ -86,18 +90,19 @@ def main():
     ratio_y = data['ratio_y']
     left_top = data['leftTop']
     image_name = data['image_name']
+    # import pdb;pdb.set_trace()
 
     # fgor test images
-    image_name = '/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/test_img/right_hand_crop.jpg' #for test_img
-    img = cv2.imread(image_name, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
-    img = cv2.resize(img, (256, 256))
+    # image_name = '/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/test_img/right_hand_crop.jpg' #for test_img
+    # img = cv2.imread(image_name, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    # img = cv2.resize(img, (256, 256))
     # img = img.transpose(2, 0, 1)
-    img = np.transpose(img, (2, 0, 1))
-    img = img.astype(np.float32)
-    img /= 255
-    img = torch.from_numpy(img).float().cuda()
-    img = color_normalize(img, DATASET_MEANS, DATASET_STDS)
-    img = img.unsqueeze(0)
+    # img = np.transpose(img, (2, 0, 1))
+    # img = img.astype(np.float32)
+    # img /= 255
+    # img = torch.from_numpy(img).float().cuda()
+    # img = color_normalize(img, DATASET_MEANS, DATASET_STDS)
+    # img = img.unsqueeze(0)
     
     with torch.no_grad():
         out_3d, heatmaps = model(img, left_top, ratio_x, ratio_y)
@@ -123,10 +128,34 @@ def main():
         f = np.array([[1145.04940459],[1143.78109572]]) #for camera 54138969
         # c = np.array([[1.33006922e+03],[2.17054342e+03]])
         # f = np.array([[3.35396544e+03],[3.35360455e+03]]) #for my camera 
+        #save the image
+        cv2.imwrite('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/stgh2_mgcn2_original.png', cvimg)  
         pred = cam2pixel(out_3d, f, c)
 
-        for i in pred:
-            cv2.circle(cvimg, (int(i[0]), int(i[1])), 3, (0,0,255), -1)
-        cv2.imwrite('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/pred_3dkps_test_my.png', cvimg)
+        skeleton = ((0, 1), (1, 2), (2, 3),
+            (0, 4), (4, 5), (5, 6),
+            (0, 7), (7, 8), (8, 9),
+            (7, 10), (10, 11), (11, 12),
+        (7, 13), (13, 14), (14, 15))
+        # for i in pred:
+        #     cv2.circle(cvimg, (int(i[0]), int(i[1])), 3, (0,0,255), -1)
+        # cv2.imwrite('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/pred_3dkps_test_my.png', cvimg)
+
+        #plot pred 16 keypoints in a 3d plot
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        for i in range(16):
+            ax.scatter(pred[i,0], pred[i,1], pred[i,2], c='r', marker='o')
+            # ax.text(pred[i,0], pred[i,1], pred[i,2],  '%s' % (str(i)), size=20, zorder=1, color='k')
+        for i in range(len(skeleton)):
+            ax.plot(pred[skeleton[i],0], pred[skeleton[i],1], pred[skeleton[i],2], c='r')
+        ax.set_xlabel('X Label')
+        ax.set_ylabel('Y Label')
+        ax.set_zlabel('Z Label')
+        ax.view_init(elev=-79, azim=-90)
+        plt.savefig('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/vis/stgh2_mgcn2_kps.png')
+
+
+
 if __name__ == '__main__':
     main()

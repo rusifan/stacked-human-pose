@@ -50,7 +50,8 @@ def accuracy(output, target, idxs, thr=0.5):
     '''
     preds   = get_preds(output)
     gts     = get_preds(target)
-    norm    = torch.ones(preds.size(0))*output.size(3)/10
+    # norm    = torch.ones(preds.size(0))*output.size(3)/10
+    norm    = torch.ones(preds.size(0))*output.size(3)/16
     dists   = calc_dists(preds, gts, norm)
 
     acc = torch.zeros(len(idxs)+1)

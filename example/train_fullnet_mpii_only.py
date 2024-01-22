@@ -26,7 +26,9 @@ import pose.datasets as datasets
 import pose.losses as losses
 import wandb
 from tqdm import tqdm
-from new_mynet import MyNet
+# from new_mynet import MyNet
+from mynet_2hg_2mgcn import MyNet #2hg_2mgcn
+
 
 # get model names and dataset names
 model_names = sorted(name for name in models.__dict__
@@ -76,11 +78,12 @@ def main(args):
     #                                    resnet_layers=args.resnet_layers)
     adj = np.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results/adj_4_16.npy')
     adj = torch.from_numpy(adj).to('cuda')
-    model = MyNet(adj, block=2)
+    model = MyNet(adj, block=2, num_stacks=2)
     # model = torch.nn.DataParallel(model).cuda()
 
     # load pre-trained model
-    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/full_net16kps/model_11.pth') #16kps checkpoint pre trained on mpii
+    # state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/full_net16kps/model_11.pth') #16kps checkpoint pre trained on mpii
+    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stgh2_mgcn2_5fps/model_87.pth') #16kps checkpoint pre trained on mpii
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
         name = k[7:] # remove `module.`
@@ -91,7 +94,7 @@ def main(args):
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_human", entity="nafisur")
-        wandb.run.name = "train_fullnet_mpii_only"
+        wandb.run.name = "mpii_only_2tgh_2mgcn_fixed"
         wandb.run.save()
         wandb.watch(model)
     # define loss function (criterion) and optimizer
@@ -190,7 +193,7 @@ def main(args):
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_{epoch}.pth')
+            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/mpii_only_2tgh_2mgcn_fixed/model_{epoch}.pth')
         # is_best = valid_acc > best_acc
         # /netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/train_fullnet_mpii_only/model_0.pth
             best_loss = min(valid_loss, best_loss)

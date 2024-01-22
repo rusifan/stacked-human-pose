@@ -67,6 +67,7 @@ def main(args):
     njoints = datasets.__dict__[args.dataset].njoints
 
     print("==> creating model '{}', stacks={}, blocks={}".format(args.arch, args.stacks, args.blocks))
+    # import pdb;pdb.set_trace()
     model = models.__dict__[args.arch](num_stacks=args.stacks,
                                        num_blocks=args.blocks,
                                        num_classes=njoints,
@@ -76,7 +77,7 @@ def main(args):
     if wandb_flag:
         wandb.login()
         wandb.init(project="mpii_human", entity="nafisur")
-        wandb.run.name = "stack_2_16kps_fix"
+        wandb.run.name = "stack_4_16kps_fix"
         wandb.run.save()
         wandb.watch(model)
     # define loss function (criterion) and optimizer
@@ -175,7 +176,7 @@ def main(args):
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked2_16kps_fix/model_{epoch}.pth')
+            torch.save(model.state_dict(), f'/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked4_16kps_fix_new/model_{epoch}.pth')
         # is_best = valid_acc > best_acc
             best_loss = min(valid_loss, best_loss)
         # save_checkpoint({

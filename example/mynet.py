@@ -29,7 +29,10 @@ def soft_argmax(voxels):
 	return coords[:,:,:2]/64.0
 
 def get_state_dict():
-    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/human36_gaus_1/model_2.pth') #16kps checkpoint pre trained on mpii
+    state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/human36_gaus_1/model_2.pth') #16kps checkpoint pre trained on mpii #4stacks 2 mgcn
+    # state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked2_16kps_fix/model_61.pth') #16kps checkpoint pre trained on mpii #2stacks 2 mgcn
+    # state_dict = torch.load('/netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked8_16kps_fix/model_42.pth') #16kps checkpoint pre trained on mpii #8stacks 2 mgcn
+    # /netscratch/nafis/human-pose/new_code_to_git/stacked-human-pose/results/stacked4_16kps_fix_new/model_10.pth
     from collections import OrderedDict
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
@@ -39,10 +42,10 @@ def get_state_dict():
     return new_state_dict
 
 class MyNet(nn.Module):
-    def __init__(self, adj, block) -> None:
+    def __init__(self, adj, block, num_stacks) -> None:
         super(MyNet, self).__init__()
-        self.sthg = hg(num_stacks=4, num_blocks=1, num_classes=16)
-        self.sthg.load_state_dict(get_state_dict())
+        self.sthg = hg(num_stacks=num_stacks, num_blocks=1, num_classes=16)
+        # self.sthg.load_state_dict(get_state_dict())
         self.MGCN = ModulatedGCN(adj, 384, num_layers=block, p_dropout=0, nodes_group=None)
         # self.MGCN.load_state_dict(torch.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results_2layers/model_module_gcn_20_eva_xyz_5236.pth'))
 
@@ -61,7 +64,8 @@ class MyNet(nn.Module):
             key_points[i,:,0] *= ratio_x[i]
             key_points[i,:,1] *= ratio_y[i]
 
-        key_points = key_points.view(N, -1, 16, 2, 1).permute(0, 3, 1, 2, 4).to('cuda')
+        # import pdb;pdb.set_trace()
+        key_points = key_points.view(N, -1, 16, 2, 1).permute(0, 3, 1, 2, 4)
         out_3d = self.MGCN(key_points)
 
         return out_3d, heatmaps

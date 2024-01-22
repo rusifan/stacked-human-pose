@@ -25,10 +25,12 @@ from pose.utils.osutils import isfile, join
 from pose.utils.transforms import fliplr, flip_back
 from pose.utils.visualize import show, show_heatmap 
 from mynet import MyNet
+# from mynet_sgcn import MyNet #sgcn
 # from mynet_8hg_4mgcn import MyNet #8hg_4mgcn
+# from mynet_2hg_2mgcn import MyNet #2hg_2mgcn
 
 best_loss = 1e10
-idx = []
+idx = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,16]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def mpjpe(predicted, target):
@@ -42,13 +44,15 @@ def mpjpe(predicted, target):
 def main():
     global best_loss
     global idx
-    train_batch = 32
-    test_batch = 32
-    workers = 1
+    train_batch = 64
+    test_batch = 64
+    workers = 4
     epochs = 100
     lr = 2.5e-4
-    schedule = [60, 90]
-    gamma = 0.1
+    # schedule = [60, 90]
+    schedule = [ 30, 60,90]
+    # gamma = 0.1
+    gamma = 0.3
     sigma_decay = 0
     njoints = 16
     debug = False
@@ -56,10 +60,27 @@ def main():
     train_flag = True
     test_flag = True
     wandb_flag = True
-    run_name = "4stack_4MGCN"
-    annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
-    annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
-    root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+    run_name = "stgh8_mgcn4_acc_fix"
+
+    # # full dataset 
+    # annotation_path_train = "annotation_body3d/fps25/h36m_train.npz"
+    # annotation_path_test = "annotation_body3d/fps25/h36m_test.npz"
+    # root_data_path = "/netscratch/nafis/human-pose/dataset_human36_nos7_f25"
+
+    #smaller dataset
+    # annotation_path_train = "annotation_body3d/fps25/h36m_smallertrain.npz"
+    # annotation_path_test = "annotation_body3d/fps25/h36m_smallertest.npz"
+    # root_data_path = "/netscratch/nafis/human-pose/pose_dataset_h36_small"
+
+    #one fps dataset
+    # annotation_path_train = "annotation_body3d/fps1/h36m_train.npz"
+    # annotation_path_test = "annotation_body3d/fps1/h36m_test.npz"
+    # root_data_path = "/netscratch/nafis/human-pose/dataset_hum36m_1f1s"
+
+    #5fps dataset
+    annotation_path_train = "annotation_body3d/fps5/h36m_train.npz"
+    annotation_path_test = "annotation_body3d/fps5/h36m_test.npz"
+    root_data_path = "/netscratch/nafis/human-pose/dataset_hum36m_10f1s"
 
     log_path = Path('./checkpoint/h36m/test/log.txt')
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,15 +91,22 @@ def main():
     print("=> creating model ...")
     adj = np.load('/netscratch/nafis/human-pose/Modulated-GCN/Modulated_GCN/Modulated-GCN_benchmark/results/adj_4_16.npy')
     adj = torch.from_numpy(adj).to('cuda')
-    model = MyNet(adj, block=2)
-    # model = MyNet(adj, block=4, num_stacks=8) # 8stack and 4 gcn
-    # model = MyNet(adj, block=4, num_stacks=4) # 8stack and 4 gcn
+    block = 4
+    num_stacks = 8
+    # model = MyNet(adj, block=2) # 4stack and 2 gcn
+    # model = MyNet(adj, block=2, num_stacks=8) # 8stack and 2 gcn
+    # model = MyNet(adj, block=2, num_stacks=2) # 8stack and 2 gcn
+    model = MyNet(adj, block=block, num_stacks=num_stacks) # 8stack and 4 gcn
     model = torch.nn.DataParallel(model).cuda()
 
+    # print size of model in mellions
+
+    print('Number of model parameters: {}'.format(
+        sum([p.data.nelement() for p in model.parameters()]) / 1000000.0))
     #experiment tracking
     if wandb_flag:
         wandb.login()
-        wandb.init(project="mpii_human", entity="nafisur")
+        wandb.init(project="to_check_accuaracy", entity="nafisur")
         wandb.run.name = run_name
         wandb.run.save()
         wandb.watch(model)
@@ -125,18 +153,19 @@ def main():
         if wandb_flag:
             wandb.log({"train_loss": train_loss})
         # evaluate on validation set
-        valid_loss, predictions = validate(val_loader, model, criterion,
+        valid_loss, acc = validate(val_loader, model, criterion,
                                            njoints, epoch, debug, flip)
         print('Valid Loss(mpjpe) in mm: %.8f' % (valid_loss * 1000))
         if wandb_flag:
             wandb.log({"Valid Loss(mpjpe) in mm": valid_loss * 1000})
+            wandb.log({"Validation accuracy": acc})
         # append logger file
         train_acc, valid_acc = 0, 0
         logger.append([epoch + 1, lr, train_loss, valid_loss, train_acc, valid_acc])
 
         # remember best acc and save checkpoint
         if valid_loss < best_loss:
-            result_path = Path(f'results/stgh4_mgcn4/model_{epoch}.pth')
+            result_path = Path(f'results/stgh8_mgcn4_acc_fix/model_diff_{epoch}.pth')
             result_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(model.state_dict(), str(result_path))
             # is_best = valid_acc > best_acc
@@ -307,10 +336,10 @@ def validate(val_loader, model, criterion, num_classes, epoch, debug=False, flip
 
         # show(input[0] + 0.5, output[0][0], target[0])
         # show_heatmap(output[0][0], target[0])
-        show(input[0] + 0.5, output[0][0], target[0], Path(f'./results/vis/full_smallerGauss/{epoch}_epoch.png'))
-        show_heatmap(output[-1][0], target[0], Path(f'./results/vis/heatmap_smallerGauss/{epoch}_epoch.png'))
+        # show(input[0] + 0.5, output[0][0], target[0], Path(f'./results/vis/full_smallerGauss/{epoch}_epoch8stg_schedul.png'))
+        # show_heatmap(output[-1][0], target[0], Path(f'./results/vis/heatmap_smallerGauss/{epoch}_epoch8stg_schedul.png'))
         bar.close()
-    return losses.avg, predictions
+    return losses.avg, acces.avg
 
 if __name__ == '__main__':
     main()

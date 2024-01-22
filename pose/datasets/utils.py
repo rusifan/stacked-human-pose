@@ -20,6 +20,9 @@ import math
 from scipy import interpolate
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
+import io
+from PIL import Image
+
 N_KEYPOINTS = 17
 N_IMG_CHANNELS = 3
 RAW_IMG_SIZE = 224
@@ -311,9 +314,12 @@ def center_crop(filePath, kps, center):
     return cropped_img, off_set_pts(kps, [x,y]), [x,y]    
     
 
-def cut_image(filePath, kps, expand_ratio, leftTop, rightBottom):
-    originImage = cv2.imread(filePath)
+def cut_image(filePath, kps, expand_ratio, leftTop, rightBottom, hf):
+    # originImage = cv2.imread(filePath)
     # import pdb;pdb.set_trace()
+    bin_img = np.array(hf[filePath])
+    originImage = np.array(Image.open(io.BytesIO(bin_img)))[..., :3]
+
     height       = originImage.shape[0]
     width        = originImage.shape[1]
     channels     = originImage.shape[2] if len(originImage.shape) >= 3 else 1
